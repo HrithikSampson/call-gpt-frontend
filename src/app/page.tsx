@@ -4,8 +4,9 @@ import { twMerge } from "tailwind-merge";
 
 import { motion } from 'framer-motion';
 import { useMicVolume } from '@/hooks/useVolume';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AudioWaveform, Bot } from "lucide-react";
+import { getSocket } from "@/function/getSocket";
 
 export default function Home() {
   const [isRecording, setIsRecording] = useState(false);
@@ -18,7 +19,7 @@ export default function Home() {
   const [botVolume, setBotVolume] = useState(0);
 
 
-  const socket = new WebSocket("ws://localhost:8000");
+  const socket = useMemo(() => getSocket(), []);
   const scale = 1 + volume / 100;
   const toggleRecording = () => {
     if (isRecording) {
@@ -31,10 +32,25 @@ export default function Home() {
         audioContextRef.current = null;
       }
     } else {
-      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(async (stream) => {
         setStreamRef(stream);
         const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
         audioContextRef.current = audioContext;
+
+        await audioContext.audioWorklet.addModule('/worklet/AudioProcessor.js');
+
+        const mediaStreamSource = audioContext.createMediaStreamSource(stream);
+        const audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+
+        audioWorkletNode.port.onmessage = (event) => {
+          const audioData = event.data;
+          socket.send(audioData.buffer);
+        };
+
+        mediaStreamSource.connect(audioWorkletNode);
+        audioWorkletNode.connect(audioContext.destination);
+
+
         audioContext.resume();
       }).catch((err) => {
         console.error("Failed to access mic:", err);
@@ -133,7 +149,6 @@ export default function Home() {
               className="text-blue-500"
               size={50}
             />
-            <audio id="audio-livekit" controls/>
           </div>
         </div>
         <div className="flex flex-row items-center justify-center gap-4 mt-10">
@@ -153,7 +168,6 @@ export default function Home() {
               className="text-blue-500 p-1"
               size={50}
             />
-            <audio id="audio-bot" controls/>
           </div>
         </div>
       </div>
